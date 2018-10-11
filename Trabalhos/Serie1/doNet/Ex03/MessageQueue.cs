@@ -11,9 +11,9 @@ namespace Ex03
 
     public class MessageQueue<T> where T : struct 
     {
-        private object _queueLock;
+        public object _queueLock { get; }
 
-        private readonly LinkedList<T> _queue = new LinkedList<T>();
+        public readonly LinkedList<T> _queue = new LinkedList<T>();
 
         public MessageQueue()
         {
@@ -21,15 +21,18 @@ namespace Ex03
         }
 
         #region class SendStatusImpl
-        class MessageHandler<T> : SendStatus where T : struct
+        class MessageHandler : SendStatus
         {
-            public T msg { get; set; }
+            private readonly MessageQueue<T> _messageQueue;
+
+            private LinkedListNode<T> _node { get; }
 
             public bool msgSend { get; set; }
 
-            public MessageHandler(T msg)
+            public MessageHandler(MessageQueue<T> messageQueue, LinkedListNode<T> node)
             {
-                this.msg = msg;
+                _messageQueue = messageQueue;
+                this._node = node;
                 msgSend = false;
             }
 
@@ -42,12 +45,25 @@ namespace Ex03
             // O método tryCancel tenta remover a mensagem da fila, retornando o sucesso dessa remoção (a remoção pode já não ser possível).
             public bool tryCancel()
             {
-                if (_queue.Contains(msg))
+                if (msgSend)
                 {
-                    return _queue.Remove(msg);
+                    return false;
                 }
 
-                return true;
+                if (_messageQueue._queue.Contains(_node.Value))
+                {
+                    try
+                    {
+                        _messageQueue._queue.Remove(_node);
+                        return true;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+
+                return false;
             }
 
             // O método await sincroniza com a entrega da mensagem:
@@ -57,7 +73,39 @@ namespace Ex03
 
             public bool await(int timeout)
             {
-                throw new NotImplementedException();
+                Monitor.Enter(this);
+
+                try
+                {
+                    do
+                    {
+                        Monitor.Wait(ExchangerLock, timeout);
+
+                        if (exchangeHolder.Signal)
+                        {
+                            // (1) devolvendo um optional com valor, quando é realizada a troca com outra thread
+                            return exchangeHolder.Data;
+                        }
+
+                        if (th.Timeout)
+                        {
+                            // (2) devolvendo um optional vazio, se expirar o limite do tempo de espera especificado,
+                            exchangeHolder = null;
+                            return null;
+                        }
+
+                    } while (true);
+                }
+                catch (ThreadInterruptedException ex)
+                {
+                    // (3) lançando ThreadInterruptedException quando a espera da thread for interrompida.
+                    exchangeHolder = null;
+                    throw;
+                }
+                finally
+                {
+                    Monitor.Exit(this);
+                }
             }
         }
         #endregion
@@ -69,8 +117,8 @@ namespace Ex03
         {
             lock (_queueLock)
             {
-                _queue.AddLast(sentMsg);
-                return new MessageHandler<T>(sentMsg);
+                var node = _queue.AddLast(sentMsg);
+                return new MessageHandler(this, node);
             }
         }
 
@@ -86,10 +134,8 @@ namespace Ex03
                 if (_queue.Count > 0)
                 {
                     _queue.RemoveFirst();
-                    
-
-
                     var toRet = _queue.First.Value;
+                    return toRet;
                 }
             }
 

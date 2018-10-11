@@ -13,7 +13,7 @@ namespace PC_Serie_1
         // (2) devolvendo um optional vazio, se expirar o limite do tempo de espera especificado, ou;
         // (3) lançando ThreadInterruptedException quando a espera da thread for interrompida.
 
-    public class KeyedExchanger<T> where T: struct 
+    public class KeyedExchanger<T> where T: struct
     {
         public class DataHolder
         {

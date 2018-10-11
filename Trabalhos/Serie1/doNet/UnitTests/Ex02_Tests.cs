@@ -1,4 +1,8 @@
-﻿using NUnit.Framework;
+﻿using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Ex02;
+using NUnit.Framework;
 
 namespace UnitTests
 {
@@ -29,9 +33,80 @@ namespace UnitTests
         // publicadas. O método Shutdown deve bloquear a thread invocante até que o processo de shutdown esteja
         // concluído, isto é, tenha sido completado o processamento de todos as mensagens aceites pelo bus.
 
-        [Test]
-        public void TestMethod1()
+        private static void Print(string s)
         {
+            Console.WriteLine(s);
+        }
+
+        class MyLogError
+        {
+            public string Message { get; set; }
+            public int ErrorCode { get; set; }
+        }
+
+        private static void PrintError(MyLogError s)
+        {
+            Console.WriteLine(s.ErrorCode + ": " + s.Message);
+        }
+
+        [Test]
+        public void Test_01_Subscribe_and_Publish_Events()
+        {
+            EventBus bus = new EventBus(5);
+
+            new Thread(() => bus.SubscribeEvent<string>(Print)).Start();
+            new Thread(() => bus.SubscribeEvent<MyLogError>(PrintError)).Start();
+
+            Thread.Sleep(1000);
+
+            int counter = 0;
+
+            for (int i = 0; i < 100; i++)
+            {
+                var aux = i;
+                Task.Run(() =>
+                {
+                    Interlocked.Increment(ref counter);
+                    bus.PublishEvent($"{aux} event occurred");
+                });
+            }
+
+            bus.PublishEvent(new MyLogError
+            {
+                ErrorCode = 20,
+                Message = @"Ligação à base de dados falhou"
+            });
+
+            Thread.Sleep(1000);
+
+            bus.Shutdown();
+
+            Assert.IsTrue(counter == 100);
+        }
+
+        [Test]
+        public void Test_02_ShutDown_Exception()
+        {
+            EventBus bus = new EventBus(5);
+
+            new Thread(() => bus.SubscribeEvent<MyLogError>(PrintError)).Start();
+
+            bus.Shutdown();
+
+            try
+            {
+                bus.PublishEvent(new MyLogError
+                {
+                    ErrorCode = 20,
+                    Message = @"Ligação à base de dados falhou"
+                });
+
+                Assert.IsTrue(false);
+            }
+            catch (InvalidOperationException e)
+            {
+                Assert.IsTrue(true);
+            }
         }
     }
 }

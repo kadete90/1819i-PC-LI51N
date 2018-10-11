@@ -13,21 +13,35 @@ namespace Ex02
 
     public class EventBus : IDisposable
     {
-        public class EventHandler<T> where T : class
+        public class EventTypeHandler
         {
-            public EventHandler(Action<T> action)
+            public LinkedList<List<subscriber, object>> BusMessage;
+
+            public EventTypeHandler(Type type)
             {
-                Action = action;
+                BusMessage = new LinkedList<object>();
+                Type = type;
                 CurrentlyUsing = 0;
             }
 
-            public Action<T> Action { get; set; }
+            public EventTypeHandler(Type type, object message)
+            {
+                BusMessage = new LinkedList<object>();
+                BusMessage.AddLast(message);
+                Type = type;
+                CurrentlyUsing = 0;
+            }
+
+            public Type Type { get; }
+
             public int CurrentlyUsing { get; set; }
+
+            public int Waiters { get; set; }
         }
 
         private object _eventBusLock;
         private readonly int _maxPending;
-        private List<EventHandler<Type>> _events = new List<EventHandler<Type>>();
+        private Dictionary<Type, EventTypeHandler> _handlers = new Dictionary<Type, EventTypeHandler>();
 
         private volatile int publishing;
         private volatile bool shutdown;
@@ -54,26 +68,55 @@ namespace Ex02
 
         public void SubscribeEvent<T>(Action<T> handler) where T : class
         {
-            lock (_eventBusLock)
+            Monitor.Enter(_eventBusLock);
+
+            if (shutdown)
             {
+                return;
+            }
+
+            List<T> messagesTo
+
+            if (!_handlers.ContainsKey(typeof(T)))
+            {
+                _handlers.Add(typeof(T), new EventTypeHandler(typeof(T)));
+            }
+
+            EventTypeHandler eventHandler;
+
+            do
+            {
+                Monitor.Wait(_eventBusLock);
+
+                if(_handlers.TryGetValue(typeof(T), out eventHandler))
+                {
+                    var aux = eventHandler.BusMessage;
+
+                    eventHandler.BusMessage.Clear();
+
+                    //cada subscritor tem a sua fila
+
+                    while (eventHandler.BusMessage.Any())
+                    {
+                        eventHandler.BusMessage.First();
+                    }
+
+                    Monitor.Exit(_eventBusLock);
+
+        
+                    action.(message);
+
+                    Monitor.Enter(_eventBusLock);
+                }
+
                 if (shutdown)
                 {
                     return;
                 }
-
-                _events.Add(new EventHandler<Type>(handler as Action<Type>));
-
-                do
-                {
-                    Monitor.Wait(_eventBusLock);
-
-                    if (shutdown)
-                    {
-                        return;
-                    }
-                }
-                while (true);
             }
+            while (true);
+
+            Monitor.Exit(_eventBusLock);
         }
 
         // O método PublishEvent​, que nunca bloqueia a thread invocante, envia a mensagem especificada para o bus de modo a que esta seja processada por todos
@@ -84,43 +127,26 @@ namespace Ex02
 
         public void PublishEvent<E>(E message) where E : class
         {
-            if (shutdown)
+            lock (_eventBusLock)
             {
-                throw new InvalidOperationException();
-            }
-
-            Interlocked.Increment(ref publishing);
-
-            try
-            {
-                foreach (EventHandler<E> evHandler in _events.OfType<EventHandler<E>>())
+                if (shutdown)
                 {
-                    var evHandlerCurrentlyUsing = evHandler.CurrentlyUsing;
+                    throw new InvalidOperationException();
+                }
 
-                    if (evHandlerCurrentlyUsing < _maxPending) // TODO REVIEW comparison in a non blocking code
+                if (_handlers.ContainsKey(typeof(E)))
+                {
+                    var handler = _handlers[typeof(E)];
+                    if (handler.CurrentlyUsing < _maxPending)
                     {
-                        Interlocked.Increment(ref evHandlerCurrentlyUsing);
+                        handler.BusMessage.AddLast(message);
 
-                        evHandler.Action(message);
-
-                        Interlocked.Decrement(ref evHandlerCurrentlyUsing);
-                    }
-                    else
-                    {
-                        // descartar
+                        Monitor.PulseAll(_eventBusLock);
                     }
                 }
-            }
-            finally // called both on success or exception
-            {
-                lock (_eventBusLock)
+                else
                 {
-                    Interlocked.Decrement(ref publishing);
-
-                    if (shutdown && publishing == 0)
-                    {
-                        shutdownMutex.ReleaseMutex();
-                    }
+                    _handlers.Add(typeof(E), new EventTypeHandler(typeof(E), message));
                 }
             }
         }

@@ -57,6 +57,14 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Ex01\Ex01.csproj">
+      <Project>{D3FF6652-75DF-43BA-9921-3A3DD92FAEE6}</Project>
+      <Name>Ex01</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\Ex02\Ex02.csproj">
+      <Project>{7BE02087-83FD-4E0F-BCE5-15E152DEA865}</Project>
+      <Name>Ex02</Name>
+    </ProjectReference>
     <ProjectReference Include="..\SyncUtils\SyncUtils.csproj">
       <Project>{3E95972A-9AB0-4DEE-896D-DD83192CFDEC}</Project>
       <Name>SyncUtils</Name>

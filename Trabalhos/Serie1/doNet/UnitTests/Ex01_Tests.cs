@@ -83,78 +83,36 @@ namespace UnitTests
         }
 
         // (3) lançando ThreadInterruptedException quando a espera da thread for interrompida
-
-        #region class MyKeyedExchangerThread
-        public abstract class BaseThread
-        {
-            private readonly Thread m_thread;
-
-            protected BaseThread()
-            {
-                m_thread = new Thread(Run);
-            }
-
-            public void Start()
-            {
-                m_thread.Start();
-            }
-
-            public void Interrupt()
-            {
-                //m_thread.Interrupt();
-                throw new ThreadInterruptedException();
-            }
-
-            protected abstract void Run();
-        }
-        class MyKeyedExchangerThread<T> : BaseThread where T : struct
-        {
-            public int Key { get; }
-            public readonly T Data;
-            public readonly KeyedExchanger<T> Exg;
-            public readonly int Timeout;
-            public T? ExchangedData;
-
-            public MyKeyedExchangerThread(int key, T data, KeyedExchanger<T> exg, int timeout)
-            {
-                Key = key;
-                Data = data;
-                Exg = exg;
-                Timeout = timeout;
-            }
-
-            protected override void Run()
-            {
-                ExchangedData = Exg.Exchange(Key, Data, Timeout);
-            }
-        }
-        #endregion
-
         [Test]
         public void Test_03_Exchange_Data_ThreadInterruptedException()
         {
-            try
-            {
-                MyKeyedExchangerThread<long> excg = new MyKeyedExchangerThread<long>(KEY, DATA_1, _keyedExchanger, TIMEOUT);
-                excg.Start();
-                excg.Interrupt();
+            bool interrupted = false;
 
-                //Thread thread = new Thread(_ =>
-                //{
-                //    _keyedExchanger.Exchange(KEY, DATA_1, TIMEOUT);
-                //    Thread.CurrentThread.Interrupt();
-                //});
-                //thread.Start();
-                ////thread.Interrupt(); // why doesn't work?
-                //thread.Join();
-
-                Assert.Fail();
-            }
-            catch (ThreadInterruptedException ex)
+            Thread thread = new Thread(_ =>
             {
-                //Console.WriteLine(ex.StackTrace);
-                Assert.IsTrue(true);
-            }
+                try
+                {
+                    _keyedExchanger.Exchange(KEY, DATA_1, TIMEOUT * 3);
+                }
+                catch (ThreadInterruptedException e)
+                {
+                    interrupted = true;
+                }
+            });
+            thread.Start();
+
+            Thread t2 = new Thread(() =>
+            {
+                Thread.Sleep(1*1000);
+                thread.Interrupt();
+            });
+
+            t2.Start();
+
+            thread.Join();
+            t2.Join();
+
+            Assert.IsTrue(interrupted);
         }
     }
 }

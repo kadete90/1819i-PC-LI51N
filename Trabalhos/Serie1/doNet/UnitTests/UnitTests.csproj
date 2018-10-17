@@ -65,6 +65,10 @@
       <Project>{7BE02087-83FD-4E0F-BCE5-15E152DEA865}</Project>
       <Name>Ex02</Name>
     </ProjectReference>
+    <ProjectReference Include="..\Ex03\Ex03.csproj">
+      <Project>{DACE85A8-D600-48AB-83F3-6E1C514C9092}</Project>
+      <Name>Ex03</Name>
+    </ProjectReference>
     <ProjectReference Include="..\SyncUtils\SyncUtils.csproj">
       <Project>{3E95972A-9AB0-4DEE-896D-DD83192CFDEC}</Project>
       <Name>SyncUtils</Name>

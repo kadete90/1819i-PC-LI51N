@@ -1,69 +1,79 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Threading;
 using SyncUtils;
 
 namespace Ex03
 {
     // Este sincronizador permite a comunicação entre threads produtoras e threads consumidoras.
-  
+
     // A implementação do sincronizador deve optimizar o número de comutações de thread que ocorrem nas várias circunstâncias.
+
+    public class Request<T> where T : struct
+    {
+        public T? Msg { get; set; }
+        public bool Done { get; set; }
+
+        public Request(T? msg, bool done)
+        {
+            Msg = msg;
+            Done = done;
+        }
+    }
 
     public class MessageQueue<T> where T : struct 
     {
-        public object _queueLock { get; }
-
-        public readonly LinkedList<T> _queue = new LinkedList<T>();
+        private readonly LinkedList<Request<T>> _producers = new LinkedList<Request<T>>();
+        private readonly LinkedList<Request<T>> _consumers = new LinkedList<Request<T>>();
+        private object MsgQueueLock { get; }
 
         public MessageQueue()
         {
-            _queueLock = new object();
+            MsgQueueLock = new object();
         }
 
         #region class SendStatusImpl
         class MessageHandler : SendStatus
         {
-            private readonly MessageQueue<T> _messageQueue;
+            private readonly LinkedList<Request<T>> _producers;
+            private readonly LinkedList<Request<T>> _consumers;
 
-            private LinkedListNode<T> _node { get; }
+            private LinkedListNode<Request<T>> Node { get; }
 
-            public bool msgSend { get; set; }
-
-            public MessageHandler(MessageQueue<T> messageQueue, LinkedListNode<T> node)
+            public MessageHandler(LinkedList<Request<T>> consumers, LinkedList<Request<T>> producers, LinkedListNode<Request<T>> node)
             {
-                _messageQueue = messageQueue;
-                this._node = node;
-                msgSend = false;
+                _consumers = consumers;
+                _producers = producers;
+                Node = node;
             }
 
             // O método isSent​ retorna true​ se a mensagem já foi entregue a outra thread, false​ em caso contrário.
             public bool isSent()
             {
-                return msgSend;
+                return Node.Value.Done;
             }
 
             // O método tryCancel tenta remover a mensagem da fila, retornando o sucesso dessa remoção (a remoção pode já não ser possível).
             public bool tryCancel()
             {
-                if (msgSend)
+                if (Node.Value.Done)
                 {
                     return false;
                 }
 
-                if (_messageQueue._queue.Contains(_node.Value))
+                if (!_producers.Contains(Node.Value))
                 {
-                    try
-                    {
-                        _messageQueue._queue.Remove(_node);
-                        return true;
-                    }
-                    catch
-                    {
-                        return false;
-                    }
+                    return false;
                 }
 
-                return false;
+                try
+                {
+                    _producers.Remove(Node);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
             }
 
             // O método await sincroniza com a entrega da mensagem:
@@ -73,38 +83,49 @@ namespace Ex03
 
             public bool await(int timeout)
             {
-                Monitor.Enter(this);
-
-                try
+                lock (this)
                 {
+                    if (_consumers.Count > 0)
+                    {
+                        _consumers.Last.Value.Msg = Node.Value.Msg;
+                        _consumers.Last.Value.Done = true;
+                        _consumers.RemoveLast();
+                        Monitor.PulseAll(this);
+                        return true;
+                    }
+
+                    if (timeout == 0) { return false; }
+
+                    TimeoutHolder th = new TimeoutHolder(timeout);
+
                     do
                     {
-                        Monitor.Wait(ExchangerLock, timeout);
-
-                        if (exchangeHolder.Signal)
+                        try
                         {
-                            // (1) devolvendo um optional com valor, quando é realizada a troca com outra thread
-                            return exchangeHolder.Data;
-                        }
+                            Monitor.Wait(this, th.Value);
 
-                        if (th.Timeout)
+                            if (Node.Value.Done)
+                            {
+                                return true;
+                            }
+
+                            if (th.Timeout)
+                            {
+                                _producers.Remove(Node);
+                                return false;
+                            }
+                        }
+                        catch (ThreadInterruptedException)
                         {
-                            // (2) devolvendo um optional vazio, se expirar o limite do tempo de espera especificado,
-                            exchangeHolder = null;
-                            return null;
+                            if (Node.Value.Done)
+                            {
+                                Thread.CurrentThread.Interrupt();
+                                return true;
+                            }
+                            _producers.Remove(Node);
+                            throw;
                         }
-
                     } while (true);
-                }
-                catch (ThreadInterruptedException ex)
-                {
-                    // (3) lançando ThreadInterruptedException quando a espera da thread for interrompida.
-                    exchangeHolder = null;
-                    throw;
-                }
-                finally
-                {
-                    Monitor.Exit(this);
                 }
             }
         }
@@ -115,10 +136,10 @@ namespace Ex03
 
         public SendStatus send(T sentMsg)
         {
-            lock (_queueLock)
+            lock (MsgQueueLock)
             {
-                var node = _queue.AddLast(sentMsg);
-                return new MessageHandler(this, node);
+                LinkedListNode<Request<T>> node = _producers.AddLast(new Request<T>(sentMsg, false));
+                return new MessageHandler(_consumers, _producers, node);
             }
         }
 
@@ -129,59 +150,56 @@ namespace Ex03
 
         public T? receive(int timeout) //throws InterruptedException;
         {
-            lock (_queueLock)
+            lock (MsgQueueLock)
             {
-                if (_queue.Count > 0)
+                if (_producers.Count > 0)
                 {
-                    _queue.RemoveFirst();
-                    var toRet = _queue.First.Value;
-                    return toRet;
+                    var toRet = _producers.First.Value;
+                    _producers.First.Value.Done = true;
+                    _producers.RemoveFirst();
+                    Monitor.PulseAll(MsgQueueLock);
+                    return toRet.Msg;
                 }
-            }
 
-            if (msgHandler != null)
-            {
-                return msgHandler.@await(timeout) 
-                    ? (T?)msgHandler.msg 
-                    : null;
-            }
-            
-
-            lock (_queueLock)
-            {
-                try
+                if (timeout == 0)
                 {
-                    do
+                    return null;
+                }
+
+                TimeoutHolder th = new TimeoutHolder(timeout);
+
+                LinkedListNode<Request<T>> req = _consumers.AddLast(new Request<T>(null, false));
+
+                do
+                {
+                    try
                     {
-                        TimeoutHolder th = new TimeoutHolder(timeout);
-
-                        Monitor.Wait(_queueLock, timeout);
-
-                        if (_queue.Count > 0)
+                        Monitor.Wait(MsgQueueLock, th.Value);
+                    }
+                    catch (ThreadInterruptedException)
+                    {
+                        if (req.Value.Done)
                         {
-                            msgHandler = _queue.Dequeue();
-                            break;
+                            Thread.CurrentThread.Interrupt();
+                            _consumers.Remove(req);
+                            return req.Value.Msg;
                         }
+                        _consumers.Remove(req);
+                        throw;
+                    }
 
-                        if (th.Timeout)
-                        {
-                            // TODO STUFF
-                            return null;
-                        }
+                    if (req.Value.Done)
+                    {
+                        return req.Value.Msg;
+                    }
 
-                    } while (true);
-                }
-                catch (ThreadInterruptedException ex)
-                {
-                    // TODO STUFF
-
-                    throw;
-                }
+                    if (th.Timeout)
+                    {
+                        _consumers.Remove(req);
+                        return null;
+                    }
+                } while (true);
             }
-           
-            return msgHandler != null && msgHandler.@await(timeout) 
-                ? (T?)msgHandler.msg 
-                : null;
         }
     }
 }

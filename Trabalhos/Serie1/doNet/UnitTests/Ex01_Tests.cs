@@ -16,16 +16,16 @@ namespace UnitTests
         // As threads que utilizam este sincronizador manifestam a sua disponibilidade para iniciar uma troca invocando o método exchange​, especificando a identificação do par(key​),
         // o objecto que pretendem entregar à thread parceira(mydata​) e, opcionalmente, o tempo limite da espera pela troca(timeout​).
 
-        KeyedExchanger<long> _keyedExchanger;        
+        KeyedExchangerV2<long> _keyedExchanger;        
 
         [SetUp]
         public void SetUp()
         {
-            _keyedExchanger = new KeyedExchanger<long>();
+            _keyedExchanger = new KeyedExchangerV2<long>();
         }
 
         private const int KEY = 123;
-        private const int TIMEOUT = 1 * 1000; // 1 seg
+        private const int TIMEOUT = 100; // 0.1 seg
 
         private const long DATA_1 = 10;
         private const long DATA_2 = 20;
@@ -41,7 +41,7 @@ namespace UnitTests
             try
             {
                 long? retExch1 = null, retExch2 = null;
-   
+
                 Thread t1 = new Thread(_ => retExch1 = _keyedExchanger.Exchange(KEY, DATA_1, TIMEOUT));
                 Thread t2 = new Thread(_ => retExch2 = _keyedExchanger.Exchange(KEY, DATA_2, TIMEOUT));
 
@@ -55,6 +55,54 @@ namespace UnitTests
                 Assert.IsTrue(retExch2.HasValue);
 
                 Assert.AreEqual(DATA_1, retExch2.Value);
+                Assert.AreEqual(DATA_2, retExch1.Value);
+            }
+            catch (Exception ex)
+            {
+                Assert.Fail(ex.StackTrace);
+            }
+        }
+
+        [Test]
+        public void Test_01_Exchange_Data_v2()
+        {
+            try
+            {
+                long? retExch1 = null, retExch2 = null, retExch3 = null;
+
+                Assert.IsTrue(_keyedExchanger.HoldersCount() == 0);
+
+                Thread t1 = new Thread(_ =>
+                {
+                    retExch1 = _keyedExchanger.Exchange(KEY, DATA_1, TIMEOUT);
+                    Assert.IsTrue(_keyedExchanger.HoldersCount() == 1);
+                });
+                Thread t2 = new Thread(_ =>
+                {
+                    retExch2 = _keyedExchanger.Exchange(KEY - 5, DATA_1, TIMEOUT);
+                    Assert.IsTrue(_keyedExchanger.HoldersCount() == 2);
+                });
+                Thread t3 = new Thread(_ =>
+                {
+                    retExch3 = _keyedExchanger.Exchange(KEY, DATA_2, TIMEOUT);
+                    Assert.IsTrue(_keyedExchanger.HoldersCount() == 1);
+                });
+
+                t1.Start();
+                t2.Start();
+                t3.Start();
+                
+                t1.Join();
+                t2.Join();
+                t3.Join();
+
+                Assert.IsTrue(_keyedExchanger.HoldersCount() == 0);
+                Assert.IsFalse(retExch2.HasValue);
+
+                Assert.IsTrue(retExch1.HasValue);
+                Assert.IsTrue(retExch3.HasValue);
+
+                Assert.AreEqual(DATA_1, retExch3.Value);
                 Assert.AreEqual(DATA_2, retExch1.Value);
             }
             catch (Exception ex)
@@ -92,7 +140,7 @@ namespace UnitTests
             {
                 try
                 {
-                    _keyedExchanger.Exchange(KEY, DATA_1, TIMEOUT * 3);
+                    _keyedExchanger.Exchange(KEY, DATA_1, TIMEOUT * 2);
                 }
                 catch (ThreadInterruptedException e)
                 {
@@ -103,7 +151,7 @@ namespace UnitTests
 
             Thread t2 = new Thread(() =>
             {
-                Thread.Sleep(1*1000);
+                Thread.Sleep(TIMEOUT);
                 thread.Interrupt();
             });
 

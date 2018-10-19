@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using SyncUtils;
 
@@ -13,7 +15,7 @@ namespace PC_Serie_1
         // (2) devolvendo um optional vazio, se expirar o limite do tempo de espera especificado, ou;
         // (3) lançando ThreadInterruptedException quando a espera da thread for interrompida.
 
-    public class KeyedExchanger<T> where T: struct
+    public class KeyedExchangerV2<T> where T: struct
     {
         public class DataHolder
         {
@@ -30,34 +32,39 @@ namespace PC_Serie_1
 
         private object ExchangerLock { get; }
 
-        private DataHolder exchangeHolder; // execution delegation 
+        private readonly List<DataHolder> _dataHolders; // execution delegation 
 
-        public KeyedExchanger()
+        public long HoldersCount() { lock (ExchangerLock) return _dataHolders.Count; }
+
+        public KeyedExchangerV2()
         {
+
             this.ExchangerLock = new object();
-            this.exchangeHolder = null;
+            this._dataHolders = new List<DataHolder>();
         }
 
-        public T? Exchange(int key, T mydata, int timeout) //throws InterruptedException;
+        public T? Exchange(int key, T myData, int timeout) //throws InterruptedException;
         {
             lock (ExchangerLock)
             {
-                if (exchangeHolder != null && key == exchangeHolder.Key)
+                var existentHolder = _dataHolders.FirstOrDefault(d => d.Key == key);
+
+                if (existentHolder != null)
                 {
-                    if (exchangeHolder.Signal)
+                    if (existentHolder.Signal)
                     {
                         //a third thread trying to switch data ??
                         throw new InvalidOperationException();
                     }
 
                     // switch data, signal and pulse all for the exchanged thread return the switched value
-                    var dataToRet = exchangeHolder.Data;
+                    var dataToRet = existentHolder.Data;
 
-                    exchangeHolder.Data = mydata;
-                    exchangeHolder.Signal = true;
+                    existentHolder.Data = myData;
+                    existentHolder.Signal = true;
 
                     Monitor.PulseAll(ExchangerLock);
-
+                    
                     //(1) devolvendo um optional com valor, quando é realizada a troca com outra thread
                     return dataToRet;
                 }
@@ -66,31 +73,41 @@ namespace PC_Serie_1
 
                 try
                 {
+                    existentHolder = new DataHolder(key, myData);
+                    _dataHolders.Add(existentHolder);
+
                     do
                     {
-                        exchangeHolder = new DataHolder(key, mydata);
-
                         Monitor.Wait(ExchangerLock, timeout);
 
-                        if (exchangeHolder.Signal)
+                        if (existentHolder.Signal)
                         {
                             // (1) devolvendo um optional com valor, quando é realizada a troca com outra thread
-                            return exchangeHolder.Data;
+                            _dataHolders.Remove(existentHolder);
+                            return existentHolder.Data;
                         }
 
                         if (th.Timeout)
                         {
                             // (2) devolvendo um optional vazio, se expirar o limite do tempo de espera especificado,
-                            exchangeHolder = null;
+                            _dataHolders.Remove(existentHolder);
                             return null;
                         }
 
                     } while (true);
                 }
-                catch (ThreadInterruptedException ex)
+                catch (ThreadInterruptedException)
                 {
                     // (3) lançando ThreadInterruptedException quando a espera da thread for interrompida.
-                    exchangeHolder = null;
+                    if (existentHolder != null && existentHolder.Signal)
+                    {
+                        Thread.CurrentThread.Interrupt();
+                        _dataHolders.Remove(existentHolder);
+
+                        return existentHolder.Data;
+                    }
+
+                    _dataHolders.Remove(existentHolder);
                     throw;
                 }
             }

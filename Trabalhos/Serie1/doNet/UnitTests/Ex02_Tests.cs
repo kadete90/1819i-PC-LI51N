@@ -57,7 +57,16 @@ namespace UnitTests
             new Thread(() => bus.SubscribeEvent<string>(Print)).Start();
             new Thread(() => bus.SubscribeEvent<MyLogError>(PrintError)).Start();
 
-            Thread.Sleep(1000);
+            Thread.Sleep(500);
+
+            Task.Run(() =>
+            {
+                bus.PublishEvent(new MyLogError
+                {
+                    ErrorCode = 500,
+                    Message = @"Ligação à base de dados falhou"
+                });
+            });
 
             int counter = 0;
 
@@ -71,13 +80,7 @@ namespace UnitTests
                 });
             }
 
-            bus.PublishEvent(new MyLogError
-            {
-                ErrorCode = 20,
-                Message = @"Ligação à base de dados falhou"
-            });
-
-            Thread.Sleep(1000);
+            Thread.Sleep(2000);
 
             bus.Shutdown();
 
@@ -91,22 +94,55 @@ namespace UnitTests
 
             new Thread(() => bus.SubscribeEvent<MyLogError>(PrintError)).Start();
 
-            bus.Shutdown();
+            Thread.Sleep(200);
 
-            try
+            Task.Run(() =>
             {
-                bus.PublishEvent(new MyLogError
+                Thread.Sleep(200);
+                try
                 {
-                    ErrorCode = 20,
-                    Message = @"Ligação à base de dados falhou"
-                });
+                    bus.PublishEvent(new MyLogError
+                    {
+                        ErrorCode = 500,
+                        Message = @"Ligação à base de dados falhou"
+                    });
 
-                Assert.IsTrue(false);
-            }
-            catch (InvalidOperationException e)
+                    Assert.IsTrue(true);
+                }
+                catch (InvalidOperationException)
+                {
+                    Assert.IsTrue(false);
+                }
+
+            }).Wait();
+
+            Task t2 = Task.Run(() =>
             {
-                Assert.IsTrue(true);
-            }
+                bus.Shutdown();
+            });
+
+            Task t3 = Task.Run(() =>
+            {
+                Thread.Sleep(200);
+
+                try
+                {
+                    bus.PublishEvent(new MyLogError
+                    {
+                        ErrorCode = 500,
+                        Message = @"Ligação à base de dados falhou"
+                    });
+
+                    Assert.IsTrue(false);
+                }
+                catch (InvalidOperationException)
+                {
+                    Assert.IsTrue(true);
+                }
+
+            });
+
+            Task.WaitAll(t2, t3);
         }
     }
 }

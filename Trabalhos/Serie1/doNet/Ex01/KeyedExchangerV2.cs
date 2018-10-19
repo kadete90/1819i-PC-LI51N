@@ -78,7 +78,7 @@ namespace PC_Serie_1
 
                     do
                     {
-                        Monitor.Wait(ExchangerLock, timeout);
+                        Monitor.Wait(ExchangerLock, th.Value);
 
                         if (existentHolder.Signal)
                         {
